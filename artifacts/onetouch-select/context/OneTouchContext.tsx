@@ -5,14 +5,9 @@ import React, {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
 } from "react";
-import {
-  Appearance,
-  Platform,
-  useColorScheme,
-} from "react-native";
+import { Appearance, Platform, useColorScheme } from "react-native";
 
 export interface OneTouchSettings {
   darkMode: boolean;
@@ -28,9 +23,15 @@ export interface OneTouchSettings {
 }
 
 export interface PreState {
-  darkMode: string | "light" | "dark" | null;
+  colorScheme: "light" | "dark";
   volumeLevel: number;
-  ringtoneUri: string | null;
+}
+
+export interface ActivationResult {
+  darkMode: "applied" | "apk_required" | "skipped";
+  volume: "applied" | "apk_required" | "skipped";
+  ringtone: "applied" | "apk_required" | "skipped";
+  location: "applied" | "skipped";
 }
 
 interface OneTouchContextType {
@@ -39,10 +40,11 @@ interface OneTouchContextType {
   overlayVisible: boolean;
   showOverlay: () => void;
   hideOverlay: () => void;
-  activateOneTouch: () => Promise<void>;
+  activateOneTouch: () => Promise<ActivationResult>;
   deactivateOneTouch: () => Promise<void>;
   isProcessing: boolean;
   preState: PreState | null;
+  lastResult: ActivationResult | null;
 }
 
 const defaultSettings: OneTouchSettings = {
@@ -58,8 +60,7 @@ const defaultSettings: OneTouchSettings = {
   isActive: false,
 };
 
-const STORAGE_KEY = "@onetouch_settings";
-const PRE_STATE_KEY = "@onetouch_prestate";
+const STORAGE_KEY = "@onetouch_settings_v2";
 
 const OneTouchContext = createContext<OneTouchContextType | null>(null);
 
@@ -68,6 +69,7 @@ export function OneTouchProvider({ children }: { children: React.ReactNode }) {
   const [overlayVisible, setOverlayVisible] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [preState, setPreState] = useState<PreState | null>(null);
+  const [lastResult, setLastResult] = useState<ActivationResult | null>(null);
   const colorScheme = useColorScheme();
 
   useEffect(() => {
@@ -107,50 +109,66 @@ export function OneTouchProvider({ children }: { children: React.ReactNode }) {
     setOverlayVisible(false);
   }, []);
 
-  const capturePreState = useCallback(async (): Promise<PreState> => {
-    const state: PreState = {
-      darkMode: colorScheme ?? "light",
-      volumeLevel: 50,
-      ringtoneUri: null,
-    };
-    try {
-      await AsyncStorage.setItem(PRE_STATE_KEY, JSON.stringify(state));
-    } catch {}
-    setPreState(state);
-    return state;
-  }, [colorScheme]);
-
-  const activateOneTouch = useCallback(async () => {
+  const activateOneTouch = useCallback(async (): Promise<ActivationResult> => {
     setIsProcessing(true);
-    try {
-      await capturePreState();
+    const result: ActivationResult = {
+      darkMode: "skipped",
+      volume: "skipped",
+      ringtone: "skipped",
+      location: "skipped",
+    };
 
+    try {
+      // Capture pre-state before making changes
+      const captured: PreState = {
+        colorScheme: colorScheme ?? "light",
+        volumeLevel: settings.volumeLevel,
+      };
+      setPreState(captured);
+
+      // Dark mode — works in Expo Go (in-app) and in APK (system-wide)
       if (settings.darkModeEnabled && Platform.OS !== "web") {
         Appearance.setColorScheme(settings.darkMode ? "dark" : "light");
+        result.darkMode = "applied";
+      } else if (settings.darkModeEnabled) {
+        result.darkMode = "skipped";
+      }
+
+      // Volume — requires native build (AudioManager)
+      if (settings.volumeEnabled) {
+        result.volume = "apk_required";
+      }
+
+      // Ringtone — requires native build (RingtoneManager + WRITE_SETTINGS)
+      if (settings.ringtoneEnabled) {
+        result.ringtone = "apk_required";
+      }
+
+      // Location — just a display feature, always available
+      if (settings.locationEnabled) {
+        result.location = "applied";
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setLastResult(result);
       updateSettings({ isActive: true });
+      return result;
     } finally {
       setIsProcessing(false);
       setOverlayVisible(false);
     }
-  }, [settings, capturePreState, updateSettings]);
+  }, [settings, colorScheme, updateSettings]);
 
   const deactivateOneTouch = useCallback(async () => {
     setIsProcessing(true);
     try {
-      const saved = preState;
-
-      if (saved && Platform.OS !== "web") {
-        Appearance.setColorScheme(
-          saved.darkMode === "dark" ? "dark" : "light"
-        );
+      if (preState && Platform.OS !== "web") {
+        Appearance.setColorScheme(preState.colorScheme);
       }
-
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       updateSettings({ isActive: false });
       setPreState(null);
+      setLastResult(null);
     } finally {
       setIsProcessing(false);
       setOverlayVisible(false);
@@ -169,6 +187,7 @@ export function OneTouchProvider({ children }: { children: React.ReactNode }) {
         deactivateOneTouch,
         isProcessing,
         preState,
+        lastResult,
       }}
     >
       {children}

@@ -17,51 +17,74 @@ import { useOneTouch } from "@/context/OneTouchContext";
 import { useColors } from "@/hooks/useColors";
 
 const BUTTON_SIZE = 64;
+// All animations use useNativeDriver: false to avoid native/JS driver conflicts
+// when mixing position (top/left not supported natively) with opacity/scale.
+const ND = false;
 
 export function FloatingOverlay() {
-  const { overlayVisible, hideOverlay, activateOneTouch, deactivateOneTouch, settings, isProcessing } =
-    useOneTouch();
+  const {
+    overlayVisible,
+    activateOneTouch,
+    deactivateOneTouch,
+    settings,
+    isProcessing,
+  } = useOneTouch();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width, height } = Dimensions.get("window");
 
-  const pos = useRef(new Animated.ValueXY({ x: 12, y: insets.top + 12 })).current;
+  const initX = 12;
+  const initY = insets.top + 12;
+
+  const translateX = useRef(new Animated.Value(initX)).current;
+  const translateY = useRef(new Animated.Value(initY)).current;
+  const panOffset = useRef({ x: initX, y: initY });
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.5)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const glowAnim = useRef(new Animated.Value(0)).current;
-  const panOffset = useRef({ x: 12, y: insets.top + 12 });
+
+  const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const glowLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     if (overlayVisible) {
       Animated.parallel([
-        Animated.spring(fadeAnim, { toValue: 1, useNativeDriver: true, tension: 120, friction: 8 }),
-        Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 120, friction: 7 }),
+        Animated.spring(fadeAnim, { toValue: 1, useNativeDriver: ND, tension: 120, friction: 8 }),
+        Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: ND, tension: 120, friction: 7 }),
       ]).start();
       startPulse();
     } else {
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
-        Animated.timing(scaleAnim, { toValue: 0.5, duration: 200, useNativeDriver: true }),
+        Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: ND }),
+        Animated.timing(scaleAnim, { toValue: 0.5, duration: 200, useNativeDriver: ND }),
       ]).start();
-      pulseAnim.stopAnimation();
-      glowAnim.stopAnimation();
+      pulseLoop.current?.stop();
+      glowLoop.current?.stop();
+      pulseAnim.setValue(1);
     }
   }, [overlayVisible]);
 
   const startPulse = () => {
-    Animated.loop(
+    pulseLoop.current?.stop();
+    glowLoop.current?.stop();
+
+    pulseLoop.current = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.12, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1.12, duration: 900, useNativeDriver: ND }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: ND }),
       ])
-    ).start();
-    Animated.loop(
+    );
+    pulseLoop.current.start();
+
+    glowLoop.current = Animated.loop(
       Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 1200, useNativeDriver: false }),
-        Animated.timing(glowAnim, { toValue: 0, duration: 1200, useNativeDriver: false }),
+        Animated.timing(glowAnim, { toValue: 1, duration: 1200, useNativeDriver: ND }),
+        Animated.timing(glowAnim, { toValue: 0, duration: 1200, useNativeDriver: ND }),
       ])
-    ).start();
+    );
+    glowLoop.current.start();
   };
 
   const panResponder = useRef(
@@ -70,25 +93,23 @@ export function FloatingOverlay() {
       onMoveShouldSetPanResponder: (_, gs) =>
         Math.abs(gs.dx) > 4 || Math.abs(gs.dy) > 4,
       onPanResponderGrant: () => {
-        pos.setOffset({ x: panOffset.current.x, y: panOffset.current.y });
-        pos.setValue({ x: 0, y: 0 });
+        translateX.setOffset(panOffset.current.x);
+        translateY.setOffset(panOffset.current.y);
+        translateX.setValue(0);
+        translateY.setValue(0);
       },
-      onPanResponderMove: Animated.event([null, { dx: pos.x, dy: pos.y }], {
-        useNativeDriver: false,
-      }),
+      onPanResponderMove: Animated.event(
+        [null, { dx: translateX, dy: translateY }],
+        { useNativeDriver: ND }
+      ),
       onPanResponderRelease: (_, gs) => {
-        pos.flattenOffset();
-        const currentX = panOffset.current.x + gs.dx;
-        const currentY = panOffset.current.y + gs.dy;
-        const clampedX = Math.max(4, Math.min(width - BUTTON_SIZE - 4, currentX));
-        const clampedY = Math.max(insets.top + 4, Math.min(height - BUTTON_SIZE - 80, currentY));
-        panOffset.current = { x: clampedX, y: clampedY };
-        Animated.spring(pos, {
-          toValue: { x: clampedX, y: clampedY },
-          useNativeDriver: false,
-          tension: 120,
-          friction: 8,
-        }).start();
+        translateX.flattenOffset();
+        translateY.flattenOffset();
+        const newX = Math.max(4, Math.min(width - BUTTON_SIZE - 4, panOffset.current.x + gs.dx));
+        const newY = Math.max(insets.top + 4, Math.min(height - BUTTON_SIZE - 100, panOffset.current.y + gs.dy));
+        panOffset.current = { x: newX, y: newY };
+        Animated.spring(translateX, { toValue: newX, useNativeDriver: ND, tension: 120, friction: 8 }).start();
+        Animated.spring(translateY, { toValue: newY, useNativeDriver: ND, tension: 120, friction: 8 }).start();
       },
     })
   ).current;
@@ -107,39 +128,41 @@ export function FloatingOverlay() {
 
   const glowColor = glowAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [
-      settings.isActive ? "rgba(239,68,68,0.3)" : "rgba(0,174,239,0.3)",
-      settings.isActive ? "rgba(239,68,68,0.7)" : "rgba(0,174,239,0.7)",
-    ],
+    outputRange: settings.isActive
+      ? ["rgba(239,68,68,0.20)", "rgba(239,68,68,0.55)"]
+      : ["rgba(0,174,239,0.20)", "rgba(0,174,239,0.55)"],
   });
 
-  const iconName = settings.isActive ? "power" : "flash";
+  const iconName: "power" | "flash" = settings.isActive ? "power" : "flash";
   const btnBg = settings.isActive ? "#EF4444" : colors.primary;
   const labelText = settings.isActive ? "Turn Off" : "Activate";
 
   return (
+    // Single Animated.View — all animations use ND=false, no conflicts
     <Animated.View
       style={[
         styles.container,
         {
           opacity: fadeAnim,
-          transform: [{ scale: scaleAnim }],
-          left: pos.x,
-          top: pos.y,
+          transform: [
+            { translateX },
+            { translateY },
+            { scale: scaleAnim },
+          ],
         },
       ]}
       {...panResponder.panHandlers}
     >
+      {/* Glow ring */}
       <Animated.View
-        style={[
-          styles.glow,
-          {
-            shadowColor: glowColor as unknown as string,
-            backgroundColor: glowColor as unknown as string,
-          },
-        ]}
+        style={[styles.glow, { backgroundColor: glowColor }]}
+        pointerEvents="none"
       />
-      <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+
+      {/* Pulse + button */}
+      <Animated.View
+        style={{ transform: [{ scale: pulseAnim }], alignItems: "center" }}
+      >
         <TouchableOpacity
           onPress={handlePress}
           activeOpacity={0.85}
@@ -160,17 +183,11 @@ export function FloatingOverlay() {
           )}
         </TouchableOpacity>
       </Animated.View>
+
       <View
-        style={[
-          styles.label,
-          { backgroundColor: colors.card, borderColor: colors.border },
-        ]}
+        style={[styles.label, { backgroundColor: colors.card, borderColor: colors.border }]}
       >
-        <Text
-          style={[styles.labelText, { color: colors.foreground }]}
-        >
-          {labelText}
-        </Text>
+        <Text style={[styles.labelText, { color: colors.foreground }]}>{labelText}</Text>
       </View>
     </Animated.View>
   );
@@ -179,19 +196,18 @@ export function FloatingOverlay() {
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
+    left: 0,
+    top: 0,
     zIndex: 9999,
     alignItems: "center",
   },
   glow: {
     position: "absolute",
-    width: BUTTON_SIZE + 20,
-    height: BUTTON_SIZE + 20,
-    borderRadius: (BUTTON_SIZE + 20) / 2,
-    top: -10,
-    left: -10,
-    shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 16,
-    shadowOpacity: 1,
+    width: BUTTON_SIZE + 28,
+    height: BUTTON_SIZE + 28,
+    borderRadius: (BUTTON_SIZE + 28) / 2,
+    top: -14,
+    left: -14,
   },
   button: {
     width: BUTTON_SIZE,
@@ -212,10 +228,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 10,
     borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
     elevation: 4,
   },
   labelText: {

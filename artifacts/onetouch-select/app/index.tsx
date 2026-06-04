@@ -15,7 +15,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { FloatingOverlay } from "@/components/FloatingOverlay";
 import { SectionHeader } from "@/components/SectionHeader";
 import { StatusCard } from "@/components/StatusCard";
 import { useOneTouch } from "@/context/OneTouchContext";
@@ -23,25 +22,40 @@ import { useColors } from "@/hooks/useColors";
 
 export default function HomeScreen() {
   const colors = useColors();
-  const { settings, showOverlay, overlayVisible, hideOverlay } = useOneTouch();
+  const { settings, showOverlay, overlayVisible, hideOverlay, lastResult } =
+    useOneTouch();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
   const pulseScale = useRef(new Animated.Value(1)).current;
   const pulseOpacity = useRef(new Animated.Value(0.4)).current;
+  const resultAnim = useRef(new Animated.Value(0)).current;
 
   const [locationName, setLocationName] = useState<string>("–");
 
   useEffect(() => {
     startIdlePulse();
-    fetchLocation();
   }, []);
+
+  useEffect(() => {
+    if (settings.locationEnabled) fetchLocation();
+  }, [settings.locationEnabled]);
+
+  useEffect(() => {
+    if (lastResult) {
+      Animated.sequence([
+        Animated.timing(resultAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
+        Animated.delay(3500),
+        Animated.timing(resultAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [lastResult]);
 
   const startIdlePulse = () => {
     Animated.loop(
       Animated.sequence([
         Animated.parallel([
-          Animated.timing(pulseScale, { toValue: 1.3, duration: 1400, useNativeDriver: true }),
+          Animated.timing(pulseScale, { toValue: 1.35, duration: 1400, useNativeDriver: true }),
           Animated.timing(pulseOpacity, { toValue: 0, duration: 1400, useNativeDriver: true }),
         ]),
         Animated.parallel([
@@ -53,7 +67,6 @@ export default function HomeScreen() {
   };
 
   const fetchLocation = async () => {
-    if (!settings.locationEnabled) return;
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") return;
@@ -77,8 +90,10 @@ export default function HomeScreen() {
   };
 
   const isActive = settings.isActive;
-
   const topInset = Platform.OS === "web" ? 67 : insets.top;
+
+  const needsApk =
+    (settings.volumeEnabled || settings.ringtoneEnabled);
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
@@ -88,32 +103,37 @@ export default function HomeScreen() {
         translucent={false}
       />
 
-      <FloatingOverlay />
-
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[
           styles.content,
-          { paddingTop: topInset + 16, paddingBottom: insets.bottom + 90 },
+          { paddingTop: topInset + 16, paddingBottom: insets.bottom + 100 },
         ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <View style={styles.headerRow}>
           <View>
-            <Text style={[styles.appName, { color: colors.foreground }]}>OneTouch</Text>
-            <Text style={[styles.appSub, { color: colors.primary }]}>Select</Text>
+            <Text style={[styles.appName, { color: colors.foreground }]}>
+              OneTouch
+            </Text>
+            <Text style={[styles.appSub, { color: colors.primary }]}>
+              Select
+            </Text>
           </View>
           <TouchableOpacity
             onPress={() => router.push("/settings")}
-            style={[styles.settingsBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+            style={[
+              styles.settingsBtn,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
             activeOpacity={0.75}
           >
             <Ionicons name="settings-outline" size={22} color={colors.foreground} />
           </TouchableOpacity>
         </View>
 
-        {/* Status Badge */}
+        {/* Status badge */}
         <View
           style={[
             styles.statusBadge,
@@ -123,19 +143,90 @@ export default function HomeScreen() {
             },
           ]}
         >
-          <View style={[styles.statusDot, { backgroundColor: isActive ? "#22C55E" : colors.mutedForeground }]} />
-          <Text style={[styles.statusText, { color: isActive ? "#22C55E" : colors.mutedForeground }]}>
+          <View
+            style={[
+              styles.statusDot,
+              { backgroundColor: isActive ? "#22C55E" : colors.mutedForeground },
+            ]}
+          />
+          <Text
+            style={[
+              styles.statusText,
+              { color: isActive ? "#22C55E" : colors.mutedForeground },
+            ]}
+          >
             {isActive ? "OneTouch Active" : "OneTouch Standby"}
           </Text>
         </View>
 
-        {/* Main trigger button */}
+        {/* APK notice */}
+        {needsApk && (
+          <View
+            style={[
+              styles.apkBanner,
+              { backgroundColor: "#F59E0B18", borderColor: "#F59E0B50" },
+            ]}
+          >
+            <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
+            <Text style={[styles.apkText, { color: "#F59E0B" }]}>
+              Volume & ringtone control require the installed APK — they work
+              fully on your HONOR once installed. Dark mode works now via Expo Go.
+            </Text>
+          </View>
+        )}
+
+        {/* Activation result toast */}
+        {lastResult && (
+          <Animated.View
+            style={[
+              styles.resultBanner,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity: resultAnim,
+                transform: [
+                  {
+                    translateY: resultAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-8, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Text style={[styles.resultTitle, { color: colors.foreground }]}>
+              Activation result
+            </Text>
+            <View style={styles.resultRows}>
+              <ResultRow
+                label="Dark mode"
+                status={lastResult.darkMode}
+                colors={colors}
+              />
+              <ResultRow
+                label="Volume"
+                status={lastResult.volume}
+                colors={colors}
+              />
+              <ResultRow
+                label="Ringtone"
+                status={lastResult.ringtone}
+                colors={colors}
+              />
+            </View>
+          </Animated.View>
+        )}
+
+        {/* Main trigger */}
         <View style={styles.triggerWrap}>
           <Animated.View
             style={[
               styles.pulseRing,
               {
-                borderColor: isActive ? "#EF444440" : colors.primary + "40",
+                borderColor: isActive
+                  ? "#EF444440"
+                  : colors.primary + "40",
                 transform: [{ scale: pulseScale }],
                 opacity: pulseOpacity,
               },
@@ -152,13 +243,17 @@ export default function HomeScreen() {
             onPress={handleManualTrigger}
             activeOpacity={0.85}
           >
-            <Ionicons name={overlayVisible ? "close" : "flash"} size={42} color="#fff" />
+            <Ionicons
+              name={overlayVisible ? "close" : "flash"}
+              size={42}
+              color="#fff"
+            />
           </TouchableOpacity>
           <Text style={[styles.triggerLabel, { color: colors.mutedForeground }]}>
             {overlayVisible ? "Tap to dismiss overlay" : "Tap to show overlay"}
           </Text>
           <Text style={[styles.triggerHint, { color: colors.mutedForeground }]}>
-            Triple-tap left edge to trigger anywhere
+            Triple-tap the left edge of your screen
           </Text>
         </View>
 
@@ -167,21 +262,37 @@ export default function HomeScreen() {
         <StatusCard
           icon="moon-outline"
           title="Dark Mode"
-          value={settings.darkModeEnabled ? (settings.darkMode ? "On when active" : "Off when active") : "Not configured"}
+          value={
+            settings.darkModeEnabled
+              ? settings.darkMode
+                ? "Enable dark on activate"
+                : "Enable light on activate"
+              : "Not configured"
+          }
           enabled={settings.darkModeEnabled}
         />
         <StatusCard
           icon="volume-high-outline"
           title="Volume"
-          value={settings.volumeEnabled ? `${settings.volumeLevel}% when active` : "Not configured"}
+          value={
+            settings.volumeEnabled
+              ? `${settings.volumeLevel}% — needs APK`
+              : "Not configured"
+          }
           enabled={settings.volumeEnabled}
+          apkRequired={settings.volumeEnabled}
         />
         <StatusCard
           icon="musical-notes-outline"
           title="Ringtone"
-          value={settings.ringtoneEnabled ? settings.ringtoneName : "Not configured"}
+          value={
+            settings.ringtoneEnabled
+              ? `${settings.ringtoneName} — needs APK`
+              : "Not configured"
+          }
           enabled={settings.ringtoneEnabled}
           accent="#F59E0B"
+          apkRequired={settings.ringtoneEnabled}
         />
         <StatusCard
           icon="location-outline"
@@ -194,8 +305,12 @@ export default function HomeScreen() {
         <SectionHeader title="Gesture" />
         <StatusCard
           icon="finger-print-outline"
-          title="Triple-tap Edge"
-          value={settings.gestureEnabled ? "Enabled — tap left edge ×3" : "Disabled"}
+          title="Triple-tap Left Edge"
+          value={
+            settings.gestureEnabled
+              ? "Enabled — tap left edge ×3"
+              : "Disabled"
+          }
           enabled={settings.gestureEnabled}
           accent="#A855F7"
         />
@@ -218,9 +333,50 @@ export default function HomeScreen() {
           activeOpacity={0.85}
         >
           <Ionicons name="flash" size={22} color="#fff" />
-          <Text style={styles.fabText}>{overlayVisible ? "Dismiss" : "Show Overlay"}</Text>
+          <Text style={styles.fabText}>
+            {overlayVisible ? "Dismiss Overlay" : "Show Overlay"}
+          </Text>
         </TouchableOpacity>
       </View>
+    </View>
+  );
+}
+
+function ResultRow({
+  label,
+  status,
+  colors,
+}: {
+  label: string;
+  status: "applied" | "apk_required" | "skipped";
+  colors: ReturnType<typeof import("@/hooks/useColors").useColors>;
+}) {
+  const icon =
+    status === "applied"
+      ? "checkmark-circle"
+      : status === "apk_required"
+      ? "construct-outline"
+      : "remove-circle-outline";
+  const color =
+    status === "applied"
+      ? "#22C55E"
+      : status === "apk_required"
+      ? "#F59E0B"
+      : colors.mutedForeground;
+  const text =
+    status === "applied"
+      ? "Applied"
+      : status === "apk_required"
+      ? "Needs APK"
+      : "Skipped";
+
+  return (
+    <View style={styles.resultRow}>
+      <Ionicons name={icon} size={16} color={color} />
+      <Text style={[styles.resultLabel, { color: colors.mutedForeground }]}>
+        {label}
+      </Text>
+      <Text style={[styles.resultStatus, { color }]}>{text}</Text>
     </View>
   );
 }
@@ -265,19 +421,57 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1.5,
     gap: 8,
-    marginBottom: 32,
+    marginBottom: 14,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
   statusText: {
     fontSize: 13,
     fontWeight: "700",
     letterSpacing: 0.3,
     fontFamily: "Inter_600SemiBold",
   },
+  apkBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  apkText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "500",
+    lineHeight: 18,
+    fontFamily: "Inter_500Medium",
+  },
+  resultBanner: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+    gap: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  resultTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
+    marginBottom: 2,
+  },
+  resultRows: { gap: 6 },
+  resultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  resultLabel: { flex: 1, fontSize: 13, fontWeight: "500" },
+  resultStatus: { fontSize: 12, fontWeight: "700" },
   triggerWrap: {
     alignItems: "center",
     marginBottom: 36,
